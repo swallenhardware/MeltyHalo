@@ -1,9 +1,7 @@
-#define ACCEL_BLOCKING//the code waits for the I2C transimission to complete before continuing
-//#define ACCEL_NONBLOCKING//the code starts the transmission, then periodically check for completion. Not currently implemented
+//H3LIS331DL defines
+#define ADDR_ACCEL 0x18
 
-#define ADDR_ACCEL 0x19
-
-#define WHO_A,_I 0x0F
+#define WHO_AM_I 0x0F
 #define CTRL_REG1 0x20
 #define CTRL_REG2 0x21
 #define CTRL_REG3 0x22
@@ -38,14 +36,11 @@ uint8_t writeI2CReg8Blocking(uint8_t addr, uint8_t subaddr, uint8_t data) {
 //read N bytes from an I2C device
 uint8_t readI2CRegNBlocking(uint8_t addr, uint8_t subaddr, uint8_t buflen, uint8_t *buf) {
   Wire.beginTransmission(addr);
-  Wire.write(subaddr);
+  Wire.write(subaddr | 0x80);//the current accelerometer requires that the msb be set high to do a multi-byte transfer
   Wire.endTransmission();
   Wire.requestFrom(addr, buflen);
-  Wire.endTransmission();
-  for(int i=0; i<buflen; i++) {
-    buf[i] = Wire.readByte();
-  }
-  return Wire.endTransmission();
+  while(Wire.available()) *(buf++) = Wire.readByte();
+  return Wire.getError();
 }
 
 void recieveEvent(size_t count) {
@@ -57,24 +52,39 @@ void requestEvent(void) {
 }
 
 void configAccelerometer() {
-  writeI2CReg8Blocking(ADDR_ACCEL, CTRL_REG1, 0x36);//1000Hz, normal mode, YZ enabled
-  writeI2CReg8Blocking(ADDR_ACCEL, CTRL_REG4, 0xB0);//block data update enabled, 400g full scale
+  writeI2CReg8Blocking(ADDR_ACCEL, CTRL_REG1, 0x2E);//1000Hz, normal mode, YZ enabled
+  writeI2CReg8Blocking(ADDR_ACCEL, CTRL_REG4, 0x30);//block data update enabled, 400g full scale
 }
 
 //we read from the accelerometer much slower than the accelerometer's data rate to make sure we always get new data
 //reading the same data twice could mess with the prediction algorithms
 //a better method is to use the interrupt pin on the accelerometer that tells us every time new data is available
-unsigned long measurementPeriod = 2500;//in microseconds. Represents 400Hz
+unsigned long measurementPeriod = 10000;//in microseconds. Represents 100Hz
 
-double robotSpeed = 0;
-//"c" represents the radius term and the conversion from LSB to m/s^2. It is robot-specific and should be carefully calibrated
-double c = 1;
+uint16_t robotPeriod[2];//measured in microseconds per degree, with some memory for discrete integration
+
+//this is the times we measured the accelerometer at. We keep some history for extrapolation
+unsigned long accelMeasTime[2];
+
+//this angle (degrees) is calculated only using the accelerometer. We keep it separate to keep our discrete integration algorithms operating smoothly
+//the beacon sets our heading to 0, which would mess up the discrete integration if allowed to affect this variable directly
+//instead we utilize a trim variable. In Accel control mode, the user controls trim with the encoder wheel. in hybrid mode, the beacon controls trim
+uint16_t accelAngle = 0;
+
+//in degrees, this angle is added to the accel angle as adjusted by the beacon or the driver
+uint16_t accelTrim = 0;
+
+uint16_t angleAtLastMeasurement;
 
 void runAccelerometer() {
-#ifdef ACCEL_BLOCKING
   //this uses blocking I2C, which makes it relatively slow. But given that we run our I2C ar 1.8MHz we will likely be okay
-  if(micros() - lastAccelMeasTime > measurementPeriod) {
-    lastAccelMeasTime = micros();
+  if(micros() - accelMeasTime[0] > measurementPeriod) {
+    //shift all of the old values down
+    for(int i=1; i>0; i--) {
+      accelMeasTime[i] = accelMeasTime[i-1];
+    }
+    //put in the new value
+    accelMeasTime[0] = micros();
     
     uint8_t accelBuf[6];
     if(readI2CRegNBlocking(ADDR_ACCEL, OUT_X_L, 6, accelBuf) > 0) {
@@ -82,16 +92,38 @@ void runAccelerometer() {
       Serial.println("accelerometer failed");
     }
   
-    uint16_t xAccel = (((uint16_t) accelBuf[0]) << 8) | (uint16_t) accelBuf[1];//represents acceleration tangential to the ring, not useful to us
-    uint16_t yAccel = (((uint16_t) accelBuf[2]) << 8) | (uint16_t) accelBuf[3];//represents acceleration axial to the ring, which shows which way the bot is flipped
-    uint16_t zAccel = (((uint16_t) accelBuf[4]) << 8) | (uint16_t) accelBuf[5];//represents acceleration radial to the ring, which is a measure of rotation speed
+    //int16_t xAccel = (((int16_t) accelBuf[1]) << 8) | (int16_t) accelBuf[0];//represents acceleration tangential to the ring, not useful to us
+    int16_t yAccel = (((int16_t) accelBuf[3]) << 8) | (int16_t) accelBuf[2];//represents acceleration axial to the ring, which shows which way the bot is flipped
+    int16_t zAccel = (((int16_t) accelBuf[5]) << 8) | (int16_t) accelBuf[4];//represents acceleration radial to the ring, which is a measure of rotation speed
+
+    //shift all of the old values down
+    for(int i=1; i>0; i--) {
+      robotPeriod[i] = robotPeriod[i-1];
+    }
     
-    //"c" is a constant that must be calibrated for your bot
-    //it combines the radius term, as well as the conversion from accel measurements to m/s^2
-    //Also, sqrt can be slow! use a lookup table instead if speed is an issue
-    robotSpeed = sqrt((double) (zAccel)/c);//if there are issues with execution speed, replace this line with a lookup table and use only integer math
-    angleAtLastMeasurement = angle;
+    //put in the new value
+    //this equation has been carefully calibrated for this bot. See here for explanation:
+    //https://www.swallenhardware.io/battlebots/2018/8/12/halo-pt-9-accelerometer-calibration
+    robotPeriod[0] = (uint32_t) (855 / sqrt((double) (zAccel-126)/607)) - 122L;
+
+    //give up if the bot is moving too slowly
+    if(zAccel < 400) return;
+
+    //find the new angle
+    //TRIANGULAR INTEGRATION
+    uint32_t deltaT = accelMeasTime[0] - accelMeasTime[1];
+    angleAtLastMeasurement = (angleAtLastMeasurement + (deltaT/robotPeriod[0] + deltaT/robotPeriod[1])/2) % 360;
+
+    accelAngle = angleAtLastMeasurement;
+    
+  } else {//if it isn't time to check the accelerometer, predict our current heading
+    //predict the current velocity by extrapolating old data
+    uint32_t newTime = micros();
+    uint32_t periodPredicted = robotPeriod[1] + (newTime - accelMeasTime[1]) * (robotPeriod[0] - robotPeriod[1]) / (accelMeasTime[0] - accelMeasTime[1]);
+
+    //predict the current robot heading by triangular integration up to the extrapolated point
+    uint32_t deltaT = newTime - accelMeasTime[0];
+    accelAngle = (angleAtLastMeasurement + (deltaT/periodPredicted + deltaT/robotPeriod[0])/2) % 360;
   }
-#endif
 }
 

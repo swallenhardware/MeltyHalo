@@ -1,16 +1,11 @@
 void runMeltyBrain() {
   unsigned long currTime = micros();//record the start of this iteration
 
-
   //ACCELEROMETER SENSING
   if(senseMode != BEACON_SENSING) {
     runAccelerometer();
-    
-#if APPROXIMATION_ORDER == 1
-    angle = robotSpeed*(currTime - lastAccelMeasTime) + angleAtLastMeasurement;
-#endif
   }
-
+  
   //BEACON SENSING
   if(senseMode != ACCEL_SENSING) {
     //read the sensor
@@ -20,7 +15,13 @@ void runMeltyBrain() {
     if(!beaconEnvelopeStarted && beaconReading) {//when we detect a new beacon envelope starting
       beaconEnvelopeStarted = true;
       beaconHoldTime = micros();
-      angle = 0;
+
+      //if the accelerometer is active, adjust the trim so that the heading becomes 0
+      if(senseMode == HYBRID_SENSING) {
+        accelTrim = 360 - accelAngle;
+      } else {//else we are controlling the angle directly, so set it directly
+        angle = 0;
+      }
     } else if(beaconEnvelopeStarted && !beaconReading) {//if we get a 0 reading after we start measuring an envelope
       beaconEnvelopeStarted = false;
     }
@@ -30,11 +31,11 @@ void runMeltyBrain() {
       
       if(currTime - beaconEdgeTime[0] > REV_TIMEOUT) {//if we are rotating fast enough to start the control algorithm
         
-        for(int i=APPROXIMATION_ORDER; i>0; i--) {//we shift back the previous edge times
+        for(int i=1; i>0; i--) {//we shift back the previous edge times
           beaconEdgeTime[i] = beaconEdgeTime[i-1];
         }
         
-        if(beaconEdgesRecorded < APPROXIMATION_ORDER+1) {//if we haven't recorded a long enough history to run the algorithm
+        if(beaconEdgesRecorded < 2) {//if we haven't recorded a long enough history to run the algorithm
           beaconEdgesRecorded++;
         }
         
@@ -50,20 +51,23 @@ void runMeltyBrain() {
 
     //if we have enough historical data, extrapolate from it to estimate where we are now
     //this isn't used if the accelerometer is active
-    if(beaconEdgesRecorded == APPROXIMATION_ORDER+1 && senseMode == BEACON_SENSING) {
+    if(beaconEdgesRecorded == 2 && senseMode == BEACON_SENSING) {
   
-  #if APPROXIMATION_ORDER == 1//the linear algorithm
-      angle = (currTime - beaconEdgeTime[1]) * (360) / (beaconEdgeTime[0] - beaconEdgeTime[1]) % 360;
-  #endif
-      
+      //the linear algorithm
+      angle = (uint16_t) (((uint32_t) (currTime - beaconEdgeTime[1]) * 360) / (uint32_t) (beaconEdgeTime[0] - beaconEdgeTime[1]) - 360);
     }
+  }
+
+  //if the accelerometer is active, apply the trim
+  if(senseMode != BEACON_SENSING) {
+    angle = (accelAngle + accelTrim) % 360;
   }
 
   //MOTOR COMMAND
   //first check if the melty throttle is high enough for translation
   if(meltyThrottle > 10) {
     //calculate the distance between the current heading and the commanded direction
-    int16_t diff = metlyAngle - angle;
+    int16_t diff = meltyAngle - angle;
     if(diff > 180) diff -= 360;
     if(diff < -180) diff += 360;
 

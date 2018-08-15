@@ -2,6 +2,7 @@
 #include <SPI.h>
 #include <Servo.h>
 #include <i2c_t3.h>
+//#include <Wire.h>
 
 #define enablePin 22
 #define PIN_IR 15
@@ -10,11 +11,21 @@
 #define vBatt A0
 
 //animations
-unsigned long lastChange = 0;
-unsigned long frameLength = 0;
-uint32_t frames[256][5];
-uint8_t numFrames = 0;
-uint8_t frame = 0;
+unsigned long nextFrameAt = 0;
+
+struct Frame {
+  uint16_t duration;//in degrees or milliseconds
+  struct {
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+  } led[5];
+  struct Frame *next;
+} *animationHead, *currentFrame, *idleHead, *tankHead, *spinHead;
+
+void defineAnimations(void);
+void resetStaticAnimation(void);
+void resetDynamicAnimation(void);
 
 //serial
 #define SERIAL_WAIT 0
@@ -44,18 +55,17 @@ Adafruit_DotStar strip = Adafruit_DotStar(5, DOTSTAR_GBR);
 //**********************//
 // MELTYBRAIN VARIABLES //
 //**********************//
-#define APPROXIMATION_ORDER 1 //defines what kind of approximation we use. 1 is linear prediction, 2 is parabolic prediction
 uint16_t angle = 0;//LSB is one degree
 
 #define BEACON_SENSING 0x01//if this is defined, we are angle sensing using only the infrared receiver
 #define ACCEL_SENSING 0x02//if this is defined, we are angle sensing using only the accelerometer
 #define HYBRID_SENSING 0x03//if this is defined, we are angle sensing using both the beacon and the accelerometer
-uint8_t senseMode = HYBRID_SENSING;
+uint8_t senseMode = ACCEL_SENSING;
 
 //BEACON
 boolean beacon = false;//this variable keeps track of the status of the beacon internally. If this variable and the digital read don't match, it's a rising or falling edge
 
-unsigned long beaconEdgeTime[APPROXIMATION_ORDER+1];//this is the array of rising edge acquisition times. We keep some history for better extrapolation
+unsigned long beaconEdgeTime[2];//this is the array of rising edge acquisition times. We keep some history for better extrapolation
 
 bool beaconEnvelopeStarted = false;
 unsigned long beaconHoldTime;
@@ -67,9 +77,6 @@ uint8_t beaconEdgesRecorded = 0;//this keeps track of how many beacon pulses we'
 
 //ACCELEROMETER
 void configAccelerometer(void);
-
-unsigned long lastAccelMeasTime;
-double angleAtLastMeasurement;
 
 //states
 uint8_t state = 1;
@@ -91,8 +98,13 @@ void runDynamicAnimation(void);
 
 void runMeltyBrain(void);
 
+uint16_t getBatteryVoltage() { //returns voltage in millivolts
+  return analogRead(vBatt)*5;
+}
+
+
 void setMotorSpeed(int motor, int spd) {
-  spd = constrain(spd, 0, 100);//make sure our speed value is valid. This lets us be lazier elsewhere
+  spd = constrain(spd, -100, 100);//make sure our speed value is valid. This lets us be lazier elsewhere
   //apply a deadband
   if(spd < 5 && spd > -5) spd = 0;
 
@@ -114,12 +126,8 @@ void goIdle() {
   setMotorSpeed(motor1, 0);
   setMotorSpeed(motor2, 0);
   
-  lastChange = micros();
-  frameLength = 100*1000;
-  frame = 0;
-  numFrames = 2;
-  for(int i=0; i<5; i++) frames[0][i] = 0x0;
-  for(int i=0; i<5; i++) frames[1][i] = 0x00050500;
+  animationHead = idleHead;
+  resetStaticAnimation();
 }
 
 void goTank() {
@@ -127,16 +135,8 @@ void goTank() {
 
   digitalWrite(enablePin, LOW);
   
-  lastChange = micros();
-  frameLength = 100*1000;
-  frame = 0;
-  numFrames = 6;
-  for(int i=0; i<6; i++) for(int j=0; j<5; j++) frames[i][j] = 0x0;
-  frames[0][0] = 0x00005000;
-  frames[1][1] = 0x00005000;
-  frames[2][2] = 0x00005000;
-  frames[3][3] = 0x00005000;
-  frames[4][4] = 0x00005000;
+  animationHead = tankHead;
+  resetStaticAnimation();
 }
 
 void goSpin() {
@@ -146,15 +146,10 @@ void goSpin() {
 
   beaconEdgesRecorded = 0;
 
-  frame = 0;
-  numFrames = 4;
-  for(int i=0; i<4; i++) for(int j=0; j<5; j++) frames[i][j] = 0x0;
-  frames[0][2] = 0x00000500;
-  frames[2][2] = 0x00000005;
-  frames[3][2] = 0x00050000;
-
-  setMotorSpeed(motor1, 50);
-  setMotorSpeed(motor2, -50);
+  animationHead = spinHead;
+  currentFrame = animationHead;
+  nextFrameAt = currentFrame->duration + angle;
+  shiftToLEDs();
 }
 
 void feedWatchdog() {
@@ -181,7 +176,8 @@ void setup() {
   ESC1.attach(motor1, 1000, 2000);
   ESC2.attach(motor2, 1000, 2000);
 
-  Wire.begin(I2C_MASTER, 0x00, I2C_PINS_18_19, I2C_PULLUP_EXT, 400000);//1.8MHz clock rate
+  Wire.begin(I2C_MASTER, 0x00, I2C_PINS_18_19, I2C_PULLUP_EXT, 1800000, I2C_OP_MODE_IMM);//1.8MHz clock rate
+  //Wire.begin();
 
   //SETUP WATCHDOG
   //settings taken from: https://bigdanzblog.wordpress.com/2017/10/27/watch-dog-timer-wdt-for-teensy-3-1-and-3-2/
@@ -201,6 +197,9 @@ void setup() {
   NVIC_ENABLE_IRQ(IRQ_WDOG);//enable watchdog interrupt
 
   configAccelerometer();
+
+  //build the animations
+  defineAnimations();
 
   goIdle();
 }
