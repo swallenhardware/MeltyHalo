@@ -8,7 +8,7 @@ The full writeup for this project can be found at https://www.swallenhardware.io
 
 Current functionality:
 
--Can communicate with the controller one-way over serial
+-Can communicate with the controller two-way over serial
 
 -Can drive the brushless ESCs
 
@@ -16,7 +16,9 @@ Current functionality:
 
 -Can receive and debounce IR beacon pulses
 
--Can translate in spin mode using beacon-based sensing
+-Can measure rotational speed using the accelerometer
+
+-Can translate in spin mode using beacon, accelerometer, and hybrid sensing
 
 -Can drive the flicker display for both spin and standard drive modes
 
@@ -25,14 +27,10 @@ Current functionality:
 
 TODO:
 
--Fix the non-blocking I2C communication to the accelerometer
-
--Add the second-order accelerometer algorithm
-
 -Add accelerometer "sanity checking" to the beacon sense to mitigate false triggers
 
--Rewrite the flicker display code to use a linked-list of structs
+-Add support for spin direction switching
+
+-Add auto orientation detection
 
 -Add the font table for spin display
-
--Add return communications back to the controller to report battery voltage and status
