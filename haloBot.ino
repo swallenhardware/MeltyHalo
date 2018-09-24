@@ -39,28 +39,27 @@ byte bytesRead = 0;
 unsigned long lastReceived = 0;
 
 //controls
-byte dir = 0;
 byte flip = 0;
 int16_t thumbX = 0;
 int16_t thumbY = 0;
 uint16_t throt = 0;
 uint16_t head = 0;
 byte en = 0;
-
-uint16_t meltyAngle = 0;//the commanded bearing angle for meltybrain control
-uint16_t meltyThrottle = 0;
 //leds
 Adafruit_DotStar strip = Adafruit_DotStar(5, DOTSTAR_GBR);
 
 //**********************//
 // MELTYBRAIN VARIABLES //
 //**********************//
-uint16_t angle = 0;//LSB is one degree
+uint16_t angle = 0;//LSB is one degree. Our current heading
+
+uint16_t meltyAngle = 0;//the commanded bearing angle for meltybrain control
+uint16_t meltyThrottle = 0;
 
 #define BEACON_SENSING 0x01//if this is defined, we are angle sensing using only the infrared receiver
 #define ACCEL_SENSING 0x02//if this is defined, we are angle sensing using only the accelerometer
 #define HYBRID_SENSING 0x03//if this is defined, we are angle sensing using both the beacon and the accelerometer
-uint8_t senseMode = ACCEL_SENSING;
+uint8_t senseMode = HYBRID_SENSING;
 
 //BEACON
 boolean beacon = false;//this variable keeps track of the status of the beacon internally. If this variable and the digital read don't match, it's a rising or falling edge
@@ -72,8 +71,6 @@ unsigned long beaconHoldTime;
 #define BEACON_DEBOUNCE_TIME 2000//in microseconds
 uint8_t beaconEdgesRecorded = 0;//this keeps track of how many beacon pulses we've seen, up to APPROXIMATION_ORDER. It resets when a revolution takes too long
 #define REV_TIMEOUT 2000 //this (in ms) is how long a revolution can take before we say the robot is spinning too slowly to control and reset the algorithm
-
-#define MELTY_PULSE_WIDTH 30//this is the arc length in degrees over which the motor power is pulsed higher or lower while translating
 
 //ACCELEROMETER
 void configAccelerometer(void);
@@ -99,7 +96,7 @@ void runDynamicAnimation(void);
 void runMeltyBrain(void);
 
 uint16_t getBatteryVoltage() { //returns voltage in millivolts
-  return analogRead(vBatt)*5;
+  return (analogRead(vBatt)*49)/3;
 }
 
 
@@ -161,7 +158,7 @@ void feedWatchdog() {
 
 //this runs if the robot code hangs! cut off the motors
 void watchdog_isr() {
-  digitalWrite(enablePin, LOW);
+  digitalWrite(enablePin, HIGH);
 }
 
 void setup() {
@@ -218,6 +215,20 @@ void loop() {
     goIdle();
   }
 
+  /*
+  //check if battery voltage is below 3.2V/cell cutoff (2.5V/cell under load)
+  uint16_t batteryReading  = getBatteryVoltage();
+  if((throt == 0 && batteryReading < 3200*4)) {
+    //disable motors
+    digitalWrite(enablePin, HIGH);
+    //blank LEDs
+    strip.clear();
+    strip.show();
+    //sit until power is removed
+    while(true) feedWatchdog();
+  }
+  */
+
   switch(state) {
     case STATE_IDLE:
       runStaticAnimation();
@@ -228,9 +239,9 @@ void loop() {
       
       break;
     case STATE_TANK:
-      
-      setMotorSpeed(motor1, constrain(thumbY+thumbX, -100, 100));
-      setMotorSpeed(motor2, constrain(thumbY-thumbX, -100, 100));
+
+      setMotorSpeed(motor1, thumbY+thumbX/2);
+      setMotorSpeed(motor2, thumbY-thumbX/2);
     
       runStaticAnimation();
       

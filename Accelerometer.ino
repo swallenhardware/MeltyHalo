@@ -43,14 +43,6 @@ uint8_t readI2CRegNBlocking(uint8_t addr, uint8_t subaddr, uint8_t buflen, uint8
   return Wire.getError();
 }
 
-void recieveEvent(size_t count) {
-  
-}
-
-void requestEvent(void) {
-  
-}
-
 void configAccelerometer() {
   writeI2CReg8Blocking(ADDR_ACCEL, CTRL_REG1, 0x2E);//1000Hz, normal mode, YZ enabled
   writeI2CReg8Blocking(ADDR_ACCEL, CTRL_REG4, 0x30);//block data update enabled, 400g full scale
@@ -76,6 +68,9 @@ uint16_t accelTrim = 0;
 
 uint16_t angleAtLastMeasurement;
 
+//we make this global so that comms can send it out for calibration purposes
+int16_t zAccel;
+
 void runAccelerometer() {
   //this uses blocking I2C, which makes it relatively slow. But given that we run our I2C ar 1.8MHz we will likely be okay
   if(micros() - accelMeasTime[0] > measurementPeriod) {
@@ -94,7 +89,7 @@ void runAccelerometer() {
   
     //int16_t xAccel = (((int16_t) accelBuf[1]) << 8) | (int16_t) accelBuf[0];//represents acceleration tangential to the ring, not useful to us
     int16_t yAccel = (((int16_t) accelBuf[3]) << 8) | (int16_t) accelBuf[2];//represents acceleration axial to the ring, which shows which way the bot is flipped
-    int16_t zAccel = (((int16_t) accelBuf[5]) << 8) | (int16_t) accelBuf[4];//represents acceleration radial to the ring, which is a measure of rotation speed
+    zAccel = (((int16_t) accelBuf[5]) << 8) | (int16_t) accelBuf[4];//represents acceleration radial to the ring, which is a measure of rotation speed
 
     //shift all of the old values down
     for(int i=1; i>0; i--) {
@@ -104,7 +99,7 @@ void runAccelerometer() {
     //put in the new value
     //this equation has been carefully calibrated for this bot. See here for explanation:
     //https://www.swallenhardware.io/battlebots/2018/8/12/halo-pt-9-accelerometer-calibration
-    robotPeriod[0] = (uint32_t) (855 / sqrt((double) (zAccel-126)/607)) - 122L;
+    robotPeriod[0] = (uint32_t) (726 / sqrt((double) (zAccel-225)/522));
 
     //give up if the bot is moving too slowly
     if(zAccel < 400) return;

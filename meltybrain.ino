@@ -15,19 +15,23 @@ void runMeltyBrain() {
     if(!beaconEnvelopeStarted && beaconReading) {//when we detect a new beacon envelope starting
       beaconEnvelopeStarted = true;
       beaconHoldTime = micros();
-
-      //if the accelerometer is active, adjust the trim so that the heading becomes 0
-      if(senseMode == HYBRID_SENSING) {
-        accelTrim = 360 - accelAngle;
-      } else {//else we are controlling the angle directly, so set it directly
-        angle = 0;
-      }
     } else if(beaconEnvelopeStarted && !beaconReading) {//if we get a 0 reading after we start measuring an envelope
       beaconEnvelopeStarted = false;
     }
     
     if(beaconEnvelopeStarted && micros()-beaconHoldTime > BEACON_DEBOUNCE_TIME && !beacon) {//on the rising edge of a debounced IR detections
       beacon = true;
+
+      //if the accelerometer is active, adjust the trim so that the heading becomes 0
+      if(senseMode == HYBRID_SENSING) {
+        //here we use the accelerometer to help debounce the beacon
+        //we compare how long it's been since the last acceleration to how long the accel says it should take (period * 360) * (% of revolution required)
+        if(currTime - beaconEdgeTime[0] > robotPeriod[0]*270) {
+          accelTrim = 360 - accelAngle - 40;//the 40 accounts for the fact that the beacon pics up 40 degrees before forward
+        }
+      } else {//else we are controlling the angle directly, so set it directly
+        angle = 0;
+      }
       
       if(currTime - beaconEdgeTime[0] > REV_TIMEOUT) {//if we are rotating fast enough to start the control algorithm
         
@@ -42,7 +46,6 @@ void runMeltyBrain() {
       } else {//if we are rotating too slow, restart the algorithm
         beaconEdgesRecorded = 0;
       }
-  
       beaconEdgeTime[0] = currTime;
   
     } else if(!beaconReading && beacon) {//on the falling edge of the IR receiver
@@ -67,28 +70,22 @@ void runMeltyBrain() {
   //first check if the melty throttle is high enough for translation
   if(meltyThrottle > 10) {
     //calculate the distance between the current heading and the commanded direction
-    int16_t diff = meltyAngle - angle;
-    if(diff > 180) diff -= 360;
-    if(diff < -180) diff += 360;
+    int16_t diff = 180 - abs(abs(meltyAngle - angle) - 180);
 
     //now check if we are pointed towards the commanded direction or opposite or neither
-    if(abs(diff) < MELTY_PULSE_WIDTH/2) {
+    if(abs(diff) < 90) {
       //we are pointing towards the commanded heading, forward pulse
-      setMotorSpeed(0, throt-meltyThrottle);
-      setMotorSpeed(1, throt+meltyThrottle);
-    } else if(abs(diff) > 180 - MELTY_PULSE_WIDTH/2) {
-      //we are pointing opposite the commanded heading, reverse pulse
-      setMotorSpeed(0, throt+meltyThrottle);
-      setMotorSpeed(1, throt-meltyThrottle);
+      setMotorSpeed(motor1, (flip*2-1)*(throt-meltyThrottle));
+      setMotorSpeed(motor2, (1-flip*2)*(throt+meltyThrottle));
     } else {
-      //we are pointing somewhere else, no pulse
-      setMotorSpeed(0, throt);
-      setMotorSpeed(1, throt);
+      //we are pointing opposite the commanded heading, reverse pulse
+      setMotorSpeed(motor1, (flip*2-1)*(throt+meltyThrottle));
+      setMotorSpeed(motor2, (1-flip*2)*(throt-meltyThrottle));
     }
   } else {
     //if we aren't translating, just run the motors at the throttle speed
-    setMotorSpeed(0, throt);
-    setMotorSpeed(1, throt);
+    setMotorSpeed(motor1, (flip*2-1)*throt);
+    setMotorSpeed(motor2, (1-flip*2)*(throt));
   }
 }
 
