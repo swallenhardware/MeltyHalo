@@ -22,15 +22,13 @@ Current functionality:
 
 -Uses the accelerometer to account for failures in the beacon, and vice-versa.
 
--Automatically falls-back to beacon-only motion if the accelerometer fails, and can be set to accelerometer-only if the beacon becomes unreliable.
+-Automatically falls back to beacon-only motion if the accelerometer fails, and can be set to accelerometer-only if the beacon becomes unreliable.
 
--Can drive the flicker display for both spin and standard drive modes
+-Operates a POV display while in spin mode
 
--Incorporates safety features such as dead-man and loss of comms shutdowns, and a watchdog timer.
+-Incorporates safety features such as dead-man switch, loss of comms shutdowns, and a watchdog timer.
 
 
 TODO:
 
--Fix lingering edge cases in translation code math
-
--Further refine translation code to keep the ESC's happy. They sometimes get mad and restart at present.
+-Finish support for manual trim adjust
