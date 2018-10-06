@@ -202,7 +202,7 @@ void runDynamicAnimation() {
   //if we exceed the list we just break and do nothing
   while(true) {
     count += tempFrame->duration;
-    if(count > (flip ? 360-angle : angle)) {
+    if(count > (flip ? angle : 360-angle)) {
       if(tempFrame != currentFrame) {
         nextFrameAt = currentFrame->duration + tempFrame->duration;
         currentFrame = tempFrame;

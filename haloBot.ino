@@ -1,6 +1,5 @@
 #include <Adafruit_DotStar.h>
 #include <SPI.h>
-#include <Servo.h>
 #include <i2c_t3.h>
 //#include <Wire.h>
 
@@ -51,9 +50,9 @@ Adafruit_DotStar strip = Adafruit_DotStar(5, DOTSTAR_GBR);
 //**********************//
 // MELTYBRAIN VARIABLES //
 //**********************//
-uint16_t angle = 0;//LSB is one degree. Our current heading
+int16_t angle = 0;//LSB is one degree. Our current heading
 
-uint16_t meltyAngle = 0;//the commanded bearing angle for meltybrain control
+int16_t meltyAngle = 0;//the commanded bearing angle for meltybrain control
 uint16_t meltyThrottle = 0;
 
 #define BEACON_SENSING 0x01//if this is defined, we are angle sensing using only the infrared receiver
@@ -82,10 +81,6 @@ uint8_t state = 1;
 #define STATE_TANK 2
 #define STATE_SPIN 3
 
-//motors
-Servo ESC1;
-Servo ESC2;
-
 void pollSerial(void);
 void receivePacket(void);
 
@@ -106,14 +101,8 @@ void setMotorSpeed(int motor, int spd) {
   if(spd < 5 && spd > -5) spd = 0;
 
   if(motor == motor1) spd *= -1;
-  
-  int pulseTime = map(spd, -100, 100, 1000, 2000);
-  
-  if(motor == motor1) {
-    ESC1.writeMicroseconds(pulseTime);
-  } else if(motor == motor2) {
-    ESC2.writeMicroseconds(pulseTime);
-  }
+
+  analogWrite(motor, map(spd, -100, 100, 64, 128));
 }
 
 void goIdle() {
@@ -170,9 +159,6 @@ void setup() {
 
   pinMode(PIN_IR, INPUT);
 
-  ESC1.attach(motor1, 1000, 2000);
-  ESC2.attach(motor2, 1000, 2000);
-
   Wire.begin(I2C_MASTER, 0x00, I2C_PINS_18_19, I2C_PULLUP_EXT, 1800000, I2C_OP_MODE_IMM);//1.8MHz clock rate
   //Wire.begin();
 
@@ -192,6 +178,8 @@ void setup() {
   interrupts();
 
   NVIC_ENABLE_IRQ(IRQ_WDOG);//enable watchdog interrupt
+
+  analogWriteFrequency(3, 250);//this changes the frequency of both motor outputs
 
   configAccelerometer();
 

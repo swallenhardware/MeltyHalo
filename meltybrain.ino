@@ -73,19 +73,19 @@ void runMeltyBrain() {
     int16_t diff = 180 - abs(abs(meltyAngle - angle) - 180);
 
     //now check if we are pointed towards the commanded direction or opposite or neither
-    if(abs(diff) < 90) {
+    if(diff < 90) {
       //we are pointing towards the commanded heading, forward pulse
-      setMotorSpeed(motor1, (flip*2-1)*(throt-meltyThrottle));
-      setMotorSpeed(motor2, (1-flip*2)*(throt+meltyThrottle));
+      setMotorSpeed(motor1, (1-flip*2)*(max(throt-20,0)));
+      setMotorSpeed(motor2, (flip*2-1)*(throt));
     } else {
       //we are pointing opposite the commanded heading, reverse pulse
-      setMotorSpeed(motor1, (flip*2-1)*(throt+meltyThrottle));
-      setMotorSpeed(motor2, (1-flip*2)*(throt-meltyThrottle));
+      setMotorSpeed(motor1, (1-flip*2)*(throt));
+      setMotorSpeed(motor2, (flip*2-1)*(max(throt-20,0)));
     }
   } else {
     //if we aren't translating, just run the motors at the throttle speed
-    setMotorSpeed(motor1, (flip*2-1)*throt);
-    setMotorSpeed(motor2, (1-flip*2)*(throt));
+    setMotorSpeed(motor1, (1-flip*2)*throt);
+    setMotorSpeed(motor2, (flip*2-1)*throt);
   }
 }
 

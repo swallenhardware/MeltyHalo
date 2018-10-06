@@ -54,7 +54,7 @@ void receivePacket() {
   if(state == STATE_SPIN) {
     //calculate the commanded direction and speed
     meltyThrottle = sqrt(thumbX*thumbX + thumbY*thumbY)/2;
-   int16_t calcAngle = (int16_t) (atan2((double) thumbY, (double) thumbX)*180.0/PI);
+   int16_t calcAngle = (int16_t) (atan2((double) thumbY, (double) thumbX*(flip*2-1))*180.0/PI);
    if(calcAngle < 0) calcAngle += 360;
    meltyAngle = (uint16_t) calcAngle;
   }
